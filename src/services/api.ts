@@ -17,11 +17,14 @@ export interface OrderItem {
 
 export interface APIOrder {
     id: string;
+    manufacturingNumber: string;
     customerName: string;
     orderDate: string;
+    deliveryDate: string;
     priority: 'cao' | 'trung-binh' | 'thap';
     status: string; // Summary status e.g. "Thiếu (6,000/8,500)" or "Đã giao"
-    items: OrderItem[];
+    productListLength: number;
+    items?: OrderItem[];
 }
 
 export interface ProductionOrder {
@@ -46,7 +49,7 @@ export interface Formula {
     };
 }
 
-let mockOrders: APIOrder[] = [
+const mockOrders: APIOrder[] = [
     {
         id: '001',
         customerName: 'Công ty TNHH Bao bì Sài Gòn',
@@ -158,7 +161,7 @@ let mockOrders: APIOrder[] = [
             }
         ]
     }
-];
+] as unknown as APIOrder[];
 
 const mockFormulas: Formula[] = [
     {
@@ -217,20 +220,57 @@ const mockFormulas: Formula[] = [
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
+const calculatePriority = (deliveryDate: string): 'cao' | 'trung-binh' | 'thap' => {
+    const today = new Date();
+    const delivery = new Date(deliveryDate);
+    const diffTime = delivery.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays <= 3) return 'cao';
+    if (diffDays <= 7) return 'trung-binh';
+    return 'thap';
+};
+
 export const api = {
     getOrders: async (): Promise<APIOrder[]> => {
-        await delay(300);
-        return [...mockOrders];
+        try {
+            const res = await fetch('/api/orders', {
+                headers: {
+                    'Accept': 'application/ld+json'
+                }
+            });
+            if (!res.ok) {
+                throw new Error('Network response was not ok');
+            }
+            const data = await res.json();
+            
+            return data.member.map((item: Record<string, string | number>) => ({
+                id: String(item.id),
+                manufacturingNumber: String(item.manufacturingNumber),
+                customerName: String(item.customerName),
+                orderDate: String(item.orderDate),
+                deliveryDate: String(item.deliveryDate),
+                priority: calculatePriority(String(item.deliveryDate)),
+                status: `${item.productListLength} mặt hàng`, // Temporary status based on length
+                productListLength: Number(item.productListLength),
+                items: [] // Initially empty, products will be fetched separately
+            }));
+        } catch (error) {
+            console.error('Failed to fetch from real API. Falling back to mock data.', error);
+            // Fallback for development if backend isn't running
+            await delay(300);
+            return [...mockOrders];
+        }
     },
 
     getOrder: async (id: string) => {
         await delay(200);
-        const order = mockOrders.find(o => o.id === id);
+        const order = mockOrders.find((o: APIOrder) => o.id === id);
         if (!order) throw new Error('Order not found');
 
-        // Return extensive details for a specific order
-        // For the sake of this mock, we'll just return the first item's details enhanced
-        const firstItem = order.items[0];
+        const firstItem = order.items && order.items.length > 0 ? order.items[0] : null;
+        if (!firstItem) throw new Error('Order item not found');
+
         return {
             orderId: id,
             customerName: order.customerName,
@@ -255,12 +295,30 @@ export const api = {
         };
     },
 
+    getOrderItems: async (orderId: string): Promise<OrderItem[]> => {
+        // Fallback or real API logic can go here
+        // For now using mockOrders as local fallback until real /api/orders/{id}/items exists
+        try {
+            const res = await fetch(`/api/orders/${orderId}/items`);
+            if (res.ok) {
+                const data = await res.json();
+                return data.member || data;
+            }
+        } catch (e) {
+            console.error('Failed to fetch items, using mock', e);
+        }
+        await delay(200);
+        const order = mockOrders.find((o: APIOrder) => o.id === orderId);
+        return order?.items || [];
+    },
+
     updateDelivery: async (orderId: string, itemId: string, deliveryQuantity: number) => {
         await delay(400);
-        const orderIndex = mockOrders.findIndex(o => o.id === orderId);
+        const orderIndex = mockOrders.findIndex((o: APIOrder) => o.id === orderId);
         if (orderIndex > -1) {
             const order = mockOrders[orderIndex];
-            const itemIndex = order.items.findIndex(i => i.id === itemId);
+            if (!order.items) throw new Error('No items in order');
+            const itemIndex = order.items.findIndex((i: OrderItem) => i.id === itemId);
             if (itemIndex > -1) {
                 const item = order.items[itemIndex];
                 const newDelivered = item.delivered + deliveryQuantity;
@@ -271,8 +329,8 @@ export const api = {
                 };
 
                 // Update overall status summary
-                const totalQuantity = order.items.reduce((sum, i) => sum + i.quantity, 0);
-                const totalDelivered = order.items.reduce((sum, i) => sum + i.delivered, 0);
+                const totalQuantity = order.items.reduce((sum: number, i: OrderItem) => sum + i.quantity, 0);
+                const totalDelivered = order.items.reduce((sum: number, i: OrderItem) => sum + i.delivered, 0);
 
                 if (totalDelivered >= totalQuantity) {
                     order.status = 'Đã giao';

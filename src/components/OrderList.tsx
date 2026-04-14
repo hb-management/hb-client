@@ -47,7 +47,7 @@ export function OrderList() {
 
   const filteredOrders = orders.filter(order =>
     order.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    order.items.some(item => item.productName.toLowerCase().includes(searchTerm.toLowerCase()))
+    (order.items || []).some(item => item.productName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const getPriorityInfo = (priority: string) => {
@@ -80,8 +80,22 @@ export function OrderList() {
     setDeliveryQuantity('');
   };
 
-  const toggleExpand = (orderId: string) => {
-    setExpandedOrders(prev => ({ ...prev, [orderId]: !prev[orderId] }));
+  const toggleExpand = async (orderId: string) => {
+    const isExpanding = !expandedOrders[orderId];
+    setExpandedOrders(prev => ({ ...prev, [orderId]: isExpanding }));
+    
+    // Fetch items when expanding if not available and we have productListLength > 0
+    if (isExpanding) {
+      const order = orders.find(o => o.id === orderId);
+      if (order && (!order.items || order.items.length === 0) && order.productListLength > 0) {
+        try {
+          const items = await api.getOrderItems(orderId);
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, items } : o));
+        } catch (error) {
+          console.error("Failed to fetch order items", error);
+        }
+      }
+    }
   };
 
   const handleSaveDelivery = async () => {
@@ -133,8 +147,10 @@ export function OrderList() {
           <TableHeader className="bg-muted/30">
             <TableRow>
               <TableHead className="w-[40px]"></TableHead>
+              <TableHead className="font-semibold">Mã số SX</TableHead>
               <TableHead className="font-semibold">Tên khách hàng</TableHead>
               <TableHead className="font-semibold">Ngày đặt</TableHead>
+              <TableHead className="font-semibold">Ngày giao</TableHead>
               <TableHead className="font-semibold">Độ ưu tiên</TableHead>
               <TableHead className="font-semibold">Trạng thái</TableHead>
               <TableHead className="font-semibold">Số mặt hàng</TableHead>
@@ -159,6 +175,9 @@ export function OrderList() {
                         {isExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
                       </Button>
                     </TableCell>
+                    <TableCell className="text-gray-500 font-medium">
+                      {order.manufacturingNumber}
+                    </TableCell>
                     <TableCell
                       className="font-semibold text-gray-800 cursor-pointer hover:underline"
                       onClick={() => router.push(`/customers/${order.id}?name=${encodeURIComponent(order.customerName)}`)}
@@ -167,6 +186,9 @@ export function OrderList() {
                     </TableCell>
                     <TableCell className="text-gray-600">
                       {new Date(order.orderDate).toLocaleDateString('vi-VN')}
+                    </TableCell>
+                    <TableCell className="text-gray-600">
+                      {order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString('vi-VN') : ''}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -182,7 +204,7 @@ export function OrderList() {
                       </Badge>
                     </TableCell>
                     <TableCell className="font-medium">
-                      {order.items.length} mặt hàng
+                      {order.productListLength} mặt hàng
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -197,9 +219,16 @@ export function OrderList() {
                     </TableCell>
                   </TableRow>
 
-                  {isExpanded && order.items.map((item, idx) => (
+                  {isExpanded && (!order.items || order.items.length === 0) && order.productListLength > 0 && (
+                    <TableRow className="bg-red-50/10 border-b">
+                      <TableCell colSpan={9} className="text-center py-4 text-muted-foreground text-sm">
+                        Đang tải danh sách mặt hàng...
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {isExpanded && (order.items || []).map((item, idx) => (
                     <TableRow key={item.id} className="bg-red-50/10 border-b last:border-b-0 hover:bg-red-50/20 transition-colors">
-                      <TableCell colSpan={2} className="pl-12">
+                      <TableCell colSpan={3} className="pl-12">
                         <div className="flex items-start gap-4">
                           <div className="mt-2 text-gray-400">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
